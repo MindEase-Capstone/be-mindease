@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const bcrypt = require('bcryptjs');
 
 exports.getStats = async (req, res) => {
   try {
@@ -73,3 +74,94 @@ exports.makeAdmin = async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 };
+
+exports.addUser = async (req, res) => {
+  const { username, email, password, role } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      'INSERT INTO users (username, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id, username, role',
+      [username, email || null, hashedPassword, role || 'user']
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'Username or Email already exists' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};
+
+exports.updateUserRole = async (req, res) => {
+  const { role } = req.body;
+  const { id } = req.params;
+  try {
+    const result = await pool.query("UPDATE users SET role = $1 WHERE id = $2 RETURNING id, username, role", [role, id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'User role updated successfully', user: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};
+
+// GET /api/admin/analytics - mood distribution + 7-day trend + posts-per-day
+exports.getAnalytics = async (req, res) => {
+  try {
+    // Mood distribution across ALL users
+    const moodDist = await pool.query(`
+      SELECT mood_type, COUNT(*) as count
+      FROM moods
+      GROUP BY mood_type
+    `);
+
+    // Mood trend: last 7 days
+    const moodTrend = await pool.query(`
+      SELECT 
+        date,
+        SUM(CASE WHEN mood_type = 'happy'   THEN 1 ELSE 0 END) AS happy,
+        SUM(CASE WHEN mood_type = 'neutral' THEN 1 ELSE 0 END) AS neutral,
+        SUM(CASE WHEN mood_type = 'sad'     THEN 1 ELSE 0 END) AS sad
+      FROM moods
+      WHERE date >= TO_CHAR(CURRENT_DATE - INTERVAL '6 days', 'YYYY-MM-DD')
+      GROUP BY date
+      ORDER BY date ASC
+    `);
+
+    // Posts per day: last 7 days
+    const postsPerDay = await pool.query(`
+      SELECT 
+        TO_CHAR(created_at, 'YYYY-MM-DD') AS date,
+        COUNT(*) AS count
+      FROM posts
+      WHERE created_at >= NOW() - INTERVAL '6 days'
+      GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
+      ORDER BY date ASC
+    `);
+
+    // User registrations per day: last 7 days
+    const userGrowth = await pool.query(`
+      SELECT 
+        TO_CHAR(created_at, 'YYYY-MM-DD') AS date,
+        COUNT(*) AS count
+      FROM users
+      WHERE created_at >= NOW() - INTERVAL '6 days'
+      GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
+      ORDER BY date ASC
+    `);
+
+    res.json({
+      moodDistribution: moodDist.rows,
+      moodTrend: moodTrend.rows,
+      postsPerDay: postsPerDay.rows,
+      userGrowth: userGrowth.rows,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};
+
