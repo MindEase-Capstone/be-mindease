@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const mlService = require('../services/mlService');
 
 exports.getPosts = async (req, res) => {
   try {
@@ -27,6 +28,14 @@ exports.createPost = async (req, res) => {
   if (!content) return res.status(400).json({ error: 'Content is required' });
 
   try {
+    // Validasi kesopanan konten via ML API
+    const validation = await mlService.checkSentiment(content);
+    if (!validation.is_appropriate) {
+      return res.status(400).json({ 
+        error: 'Postingan ditolak karena mengandung kata-kata yang dinilai tidak sopan atau kurang pantas. Mari jaga Ruang Aman ini tetap kondusif. 💚' 
+      });
+    }
+
     const result = await pool.query(
       'INSERT INTO posts (user_id, content) VALUES ($1, $2) RETURNING id, created_at',
       [req.user.id, content]
