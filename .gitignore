@@ -1,5 +1,6 @@
 node_modules/
 .env
 .DS_Store
-database.sqlite  
- 
+database.sqlite
+__pycache__/
+*.pyc
