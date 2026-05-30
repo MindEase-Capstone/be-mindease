@@ -264,7 +264,7 @@ const getReminderEmailTemplate = (username, hasCheckedIn) => {
               : 'Hanya butuh waktu kurang dari 1 menit untuk melakukan check-in hari ini! Yuk, catat perasaanmu sekarang:'}
           </p>
           <div class="btn-wrapper">
-            <a href="http://localhost:5173" class="btn">
+            <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="btn">
               ${checkinFlag ? 'Lihat Dashboard MindEase' : 'Check-in Mood Sekarang'}
             </a>
           </div>
@@ -345,7 +345,7 @@ const sendDailyMoodReminders = async () => {
 };
 
 const getResetPasswordEmailTemplate = (username, token) => {
-  const resetLink = `http://localhost:5173/reset-password?token=${token}`;
+  const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${token}`;
   return `
     <!DOCTYPE html>
     <html>
@@ -485,7 +485,7 @@ const getResetPasswordEmailTemplate = (username, token) => {
 };
 
 const sendResetPasswordEmail = async (email, username, token) => {
-  const resetLink = `http://localhost:5173/reset-password?token=${token}`;
+  const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${token}`;
   console.log(`[EmailService] Memulai pengiriman link reset password ke: ${email}`);
 
   const transporter = getTransporter();
@@ -667,7 +667,7 @@ const getWelcomeEmailTemplate = (username) => {
             Mari mulai langkah pertamamu menuju kesehatan mental yang lebih baik hari ini!
           </p>
           <div class="btn-wrapper">
-            <a href="http://localhost:5173" class="btn">Mulai Jelajahi MindEase</a>
+            <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="btn">Mulai Jelajahi MindEase</a>
           </div>
         </div>
         <div class="footer">

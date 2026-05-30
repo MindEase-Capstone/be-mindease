@@ -13,7 +13,7 @@ try {
   console.warn("Package groq-sdk tidak terinstall.");
 }
 
-const FASTAPI_URL = 'http://localhost:8000';
+const FASTAPI_URL = process.env.ML_API_URL || 'http://localhost:8000';
 
 async function callAI(systemPrompt, userMessage) {
   // 1. Coba Gemini jika ada kunci
@@ -582,7 +582,7 @@ exports.predictHealth = async (req, res) => {
   const { features } = req.body;
   try {
     // 1. Coba hubungi FastAPI di port 8000 jika menyala
-    const response = await fetch('http://localhost:8000/predict', {
+    const response = await fetch(`${FASTAPI_URL}/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ features })
