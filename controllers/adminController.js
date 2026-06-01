@@ -219,6 +219,8 @@ exports.deleteUser = async (req, res) => {
       }
     }
 
+    await pool.query('DELETE FROM chat_history WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM chat_sessions WHERE user_id = $1', [userId]);
     await pool.query('DELETE FROM moods WHERE user_id = $1', [userId]);
     await pool.query('DELETE FROM posts WHERE user_id = $1', [userId]);
     await pool.query('DELETE FROM users WHERE id = $1', [userId]);
