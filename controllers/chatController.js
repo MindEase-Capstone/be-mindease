@@ -312,7 +312,7 @@ function mapGender(genderStr) {
 
 exports.chatAgent = async (req, res) => {
   try {
-    const { message, currentState, session_id, mode } = req.body;
+    const { message, currentState, session_id, mode, ask_counts = {} } = req.body;
     const activeMode = mode || 'chat';
     const hadNoGender = !currentState || currentState.gender === null || currentState.gender === undefined;
     const hadNoAge = !currentState || currentState.age === null || currentState.age === undefined;
@@ -404,14 +404,24 @@ exports.chatAgent = async (req, res) => {
         ];
 
         const missingFeatures = [];
+        const skippedFeatures = [];
         if (currentState && typeof currentState === 'object') {
           for (const key of CORE_ASSESSMENT_KEYS) {
             if (currentState[key] === null || currentState[key] === undefined) {
-              missingFeatures.push(key);
+              if (ask_counts[key] >= 3) {
+                skippedFeatures.push(key);
+              } else {
+                missingFeatures.push(key);
+              }
             }
           }
         }
-        const nextQuestionHint = missingFeatures[0] || 'selesai';
+        let nextQuestionHint = missingFeatures[0];
+        if (!nextQuestionHint && skippedFeatures.length > 0) {
+          nextQuestionHint = 'selesai';
+        } else if (!nextQuestionHint) {
+          nextQuestionHint = 'selesai';
+        }
 
         let prompt = "";
 
@@ -429,7 +439,7 @@ TUGASMU:
 1. Berikan tanggapan yang tulus, penuh empati, dan menenangkan (2-3 kalimat bahasa Indonesia santai).
 2. Fokus sepenuhnya pada validasi emosi dan mendengarkan keluh kesah user secara alami.
 3. JANGAN pernah menanyakan data teknis, skor, angka, atau variabel apa pun secara paksa. Biarkan percakapan mengalir santai.
-4. Di akhir tanggapan, Anda boleh mengajukan satu pertanyaan terbuka yang lembut untuk mendorong mereka bercerita lebih lanjut tentang perasaan mereka (bukan tentang data numerik).
+4. JANGAN selalu membalas dengan pertanyaan di akhir kalimat! Jika percakapan sudah mengalir, atau jika user tampak bingung/kesal/pusing, berikan saja pernyataan dukungan (support) dan empati tanpa menanyakan hal baru. Hanya bertanya sesekali jika dirasa perlu.
 5. Dari pesan user, tetap lakukan ekstraksi secara diam-diam JIKA mereka menceritakan informasi berikut secara natural (jika tidak ada, kosongkan saja):
    - age (umur, angka)
    - gender (Male/Female/Other)
@@ -538,7 +548,8 @@ PENTING: Hanya balas dengan JSON murni dengan struktur:
           reply: parsed.reply,
           extractedFeatures: cleanFeatures,
           is_crisis: false,
-          action: "CONTINUE_CHAT"
+          action: "CONTINUE_CHAT",
+          target_feature: nextQuestionHint === 'selesai' ? null : nextQuestionHint
         });
 
       } catch (aiError) {
@@ -714,6 +725,7 @@ PENTING: Hanya balas dengan JSON murni dengan struktur:
 
     // Cari variabel tidak lengkap berikutnya
     let nextFeature = null;
+    let fallbackSkipped = false;
     const CORE_ASSESSMENT_KEYS = [
       'academic_year', 'study_hours_per_day', 'exam_pressure', 'academic_performance',
       'stress_level', 'anxiety_score', 'depression_score', 'sleep_hours',
@@ -722,6 +734,10 @@ PENTING: Hanya balas dengan JSON murni dengan struktur:
     ];
     for (const key of CORE_ASSESSMENT_KEYS) {
       if (tempState[key] === null || tempState[key] === undefined) {
+        if (ask_counts[key] >= 3) {
+          fallbackSkipped = true;
+          continue;
+        }
         nextFeature = key;
         break;
       }
@@ -768,7 +784,8 @@ PENTING: Hanya balas dengan JSON murni dengan struktur:
       reply,
       extractedFeatures: extracted,
       is_crisis: false,
-      action: "CONTINUE_CHAT"
+      action: "CONTINUE_CHAT",
+      target_feature: nextFeature
     });
   } catch (error) {
     console.error(error);
@@ -961,17 +978,25 @@ exports.updateSession = async (req, res) => {
 exports.generateSessionTitle = async (req, res) => {
   try {
     const { id } = req.params;
-    const { message } = req.body;
+    const { message, currentState, session_id, ask_counts } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
+    // Teruskan riwayat (currentState) sebagai history ke FastAPI
+    // FastAPI sekarang juga mengharapkan 'ask_counts'
+    const fastApiPayload = {
+      message: message,
+      history: currentState || {},
+      ask_counts: ask_counts || {}
+    };
+
     // Panggil FastAPI untuk generate judul
     const response = await fetch(`${FASTAPI_URL}/generate-title`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message })
+      body: JSON.stringify(fastApiPayload)
     });
 
     if (!response.ok) {
@@ -999,7 +1024,42 @@ exports.generateSessionTitle = async (req, res) => {
 };
 
 exports.predictHealth = async (req, res) => {
-  const { features } = req.body;
+  const { features, session_id } = req.body;
+  
+  if (req.user && session_id) {
+    try {
+      await pool.query(
+        "INSERT INTO chat_history (user_id, session_id, sender, text, type) VALUES ($1, $2, $3, $4, $5)",
+        [req.user.id, session_id, 'user', 'Saya ingin melihat hasil analisisnya sekarang.', 'text']
+      );
+    } catch (e) {
+      console.error("Gagal merekam chat predict ke DB:", e.message);
+    }
+  }
+
+  let validCount = 0;
+  const CORE_KEYS = ['stress_level', 'anxiety_score', 'depression_score', 'sleep_hours', 'academic_year', 'study_hours_per_day', 'exam_pressure', 'academic_performance', 'physical_activity', 'social_support', 'screen_time', 'internet_usage', 'financial_stress', 'family_expectation'];
+  for (const k of CORE_KEYS) {
+    if (features && features[k] !== null && features[k] !== undefined) validCount++;
+  }
+  if (validCount === 0) {
+    const error_message = "Maaf, secara etika psikologi klinis, MindEase AI tidak dapat menghasilkan diagnosis atau skor burnout jika Anda belum memberikan data apa pun. Hal ini untuk mencegah asumsi algoritma (diagnosis palsu). Silakan bercerita sedikit lebih banyak agar kami bisa memberikan analisis yang valid! 💙";
+    
+    if (req.user && session_id) {
+      try {
+        await pool.query(
+          "INSERT INTO chat_history (user_id, session_id, sender, text, type) VALUES ($1, $2, $3, $4, $5)",
+          [req.user.id, session_id, 'ai', "🛑 " + error_message, 'text']
+        );
+      } catch (e) {}
+    }
+
+    return res.json({
+      is_insufficient_data: true,
+      error_message
+    });
+  }
+
   try {
     // 1. Coba hubungi FastAPI di port 8000 jika menyala
     const response = await fetch(`${FASTAPI_URL}/predict`, {

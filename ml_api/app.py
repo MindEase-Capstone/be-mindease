@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Any, Optional
+from pydantic import BaseModel, Field
+from typing import Any, Optional, Dict
 import json
 import tensorflow as tf
 import numpy as np
@@ -9,6 +9,7 @@ import joblib
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from groq import Groq
+import instructor
 import pickle
 import re
 from nltk.corpus import stopwords
@@ -19,7 +20,9 @@ from pathlib import Path
 load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Setup Groq API
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+groq_client_normal = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# Setup Instructor-patched Groq API
+groq_client = instructor.from_groq(Groq(api_key=os.environ.get("GROQ_API_KEY")))
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 app = FastAPI(title="MindEase AI API")
@@ -73,20 +76,39 @@ def preprocess_profanity(text):
     return ' '.join(tokens)
 
 # 2. Schema Input
+class TitleRequest(BaseModel):
+    message: str
+
+class ExpertAssessment(BaseModel):
+    pesan_personal: str
+    referensi_teori_jurnal: str
+    link_referensi: str
+    rekomendasi_terapi_evidence_based: str
+    link_terapi: str
+
 class HealthData(BaseModel):
-    features: dict
+    features: Dict[str, Any]
+    chat_history: Optional[str] = None
+    history: Optional[Any] = None
+    ask_counts: Optional[Dict[str, int]] = {}
 
 class ProfanityRequest(BaseModel):
     text: str
 
 # Schema untuk Chat
-# history bisa berupa dict (currentState dari frontend) atau list
 class ChatMessage(BaseModel):
     message: str
-    history: Optional[Any] = None  # Bisa dict (21 fitur) atau list
+    history: Optional[Any] = None
+    ask_counts: Optional[Dict[str, int]] = {}
 
 class TitleRequest(BaseModel):
     message: str
+
+# Schema Pydantic untuk Expert Assessment (Instructor)
+class ExpertAssessment(BaseModel):
+    pesan_personal: str = Field(..., description="Pesan personal 2-3 kalimat yang tulus dan hangat")
+    referensi_teori_jurnal: str = Field(..., description="Referensi psikologi akademis (misal: 'Maslach Burnout Inventory', 'DASS-21', dll)")
+    rekomendasi_terapi_evidence_based: str = Field(..., description="Rekomendasi terapi psikologis nyata (misal: 'CBT', 'Mindfulness', dll)")
 
 # Schema untuk Asesmen Akhir (Poin 4)
 class AssessmentRequest(BaseModel):
@@ -224,24 +246,35 @@ def chat(data: ChatMessage):
     - Feature Extraction: ekstrak 21 fitur dari percakapan (format JSON)
     """
     user_message = data.message.strip()
-    current_state = data.history  # history digunakan sebagai currentState dari frontend
+    current_state = data.history
+    ask_counts = data.ask_counts or {}
 
-    # === PRIORITAS TERTINGGI: Cek Krisis ===
     if detect_crisis(user_message):
         return {
             "reply": CRISIS_RESPONSE["reply"],
             "extractedFeatures": {},
             "is_crisis": True,
             "action": "SHOW_EMERGENCY_CONTACTS",
-            "hotlines": CRISIS_RESPONSE["hotlines"]
+            "hotlines": CRISIS_RESPONSE["hotlines"],
+            "target_feature": None
         }
 
-    # Tentukan fitur mana yang masih null/kosong
     null_features = []
+    skipped_features = []
     if isinstance(current_state, dict):
-        null_features = [k for k, v in current_state.items() if v is None]
+        for k, v in current_state.items():
+            if v is None:
+                # Three-Strike Rule
+                if ask_counts.get(k, 0) >= 3:
+                    skipped_features.append(k)
+                else:
+                    null_features.append(k)
     
     next_question_hint = null_features[0] if null_features else None
+
+    # Jika semua fitur null sudah di-skip karena 3 strike, maka anggap lengkap
+    if not null_features and skipped_features:
+        next_question_hint = None
 
     system_prompt = f"""Kamu adalah "MindEase AI", teman curhat yang empatik untuk mahasiswa Indonesia.
 
@@ -310,7 +343,8 @@ PENTING: Hanya balas dengan JSON murni, tidak ada teks lain:
             "reply": result.get("reply", "Aku di sini untukmu. 💙"),
             "extractedFeatures": clean_features,
             "is_crisis": False,
-            "action": "CONTINUE_CHAT"
+            "action": "CONTINUE_CHAT",
+            "target_feature": next_question_hint
         }
 
     except Exception as e:
@@ -318,7 +352,8 @@ PENTING: Hanya balas dengan JSON murni, tidak ada teks lain:
             "reply": "Maaf, saya sedang mengalami gangguan teknis. Boleh kamu ceritakan lagi?",
             "extractedFeatures": {},
             "is_crisis": False,
-            "action": "CONTINUE_CHAT"
+            "action": "CONTINUE_CHAT",
+            "target_feature": None
         }
 
 @app.post("/generate-title")
@@ -333,7 +368,7 @@ def generate_title(data: TitleRequest):
             f"PENTING: Hanya balas dengan judulnya saja. Tanpa tanda kutip, tanpa titik, tanpa pengantar."
         )
         
-        chat_completion = groq_client.chat.completions.create(
+        chat_completion = groq_client_normal.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model=GROQ_MODEL,
             temperature=0.3,
@@ -447,43 +482,51 @@ def predict(data: HealthData):
         max_core = max(stress_val, anxiety_val, dep_val)
         burnout_score = max(burnout_score, float(max_core * 0.95))
     
-    # === POIN 4: Hasilkan Asesmen Mental Health ===
     assessment = get_mental_health_assessment(risk_level, burnout_score)
     
-    # Memanggil Groq Llama untuk rekomendasi yang lebih natural dan manusiawi
     try:
         level_map = {'High': 'tinggi', 'Medium': 'sedang', 'Low': 'rendah'}
         level_indo = level_map.get(risk_level, risk_level)
+        
+        context_details = []
+        for k in ['stress_level', 'anxiety_score', 'depression_score', 'sleep_hours', 'exam_pressure', 'financial_stress', 'academic_performance']:
+            if input_dict.get(k) is not None:
+                context_details.append(f"{k}: {input_dict[k]}")
+        context_str = ", ".join(context_details)
+
+        user_story = data.chat_history or "Tidak ada riwayat chat."
+        
         prompt = (
-            f"Kamu adalah konselor kesehatan mental yang hangat dan penuh empati. "
-            f"Seorang mahasiswa baru saja selesai berbagi cerita dan sistem kami menilai "
-            f"tingkat risiko mentalnya {level_indo} dengan skor burnout {burnout_score:.1f} dari 10. "
-            f"Kondisi yang terdeteksi: {assessment['condition']}. "
-            f"Tulis 2-3 kalimat pesan personal yang terasa TULUS dan HANGAT untuknya. "
-            f"Jangan sebut angka atau skor apapun. Jangan mulai dengan kata 'Berdasarkan' atau 'Analisis'. "
-            f"Langsung sapa jiwanya seolah kamu sudah mendengar semua ceritanya. "
-            f"Gunakan bahasa Indonesia yang santai, bukan formal."
+            f"Seorang mahasiswa memiliki tingkat risiko mental {level_indo} dengan skor burnout {burnout_score:.1f} dari 10. "
+            f"Data skor kondisinya: {context_str}. "
+            f"Keluhan Asli User (Curhatan): '{user_story}'. "
+            f"Status Umum: {assessment['condition']}. "
+            f"PENTING: JANGAN SEKADAR menjawab 'CBT' atau 'Maslach Burnout Inventory' jika ada terapi yang lebih spesifik! "
+            f"Berdasarkan 'Keluhan Asli User' di atas, carikan jurnal psikologi/teori medis yang SANGAT SPESIFIK untuk memvalidasi keluhan tersebut, dan berikan link valid (URL yang bisa diklik) ke sumber bacaan tepercaya (misal dari NCBI, APA, dll). "
+            f"Berikan juga rekomendasi terapi/intervensi psikologis yang SANGAT SPESIFIK untuk masalah aslinya, beserta link artikel/panduan self-help tentang terapi tersebut. "
+            f"Tuliskan ke dalam field: pesan_personal, referensi_teori_jurnal, link_referensi, rekomendasi_terapi_evidence_based, dan link_terapi."
         )
         
-        chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
+        expert_response = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
             model=GROQ_MODEL,
-            temperature=0.7,
-            max_tokens=256,
+            response_model=ExpertAssessment,
+            temperature=0.3,
+            max_tokens=350,
         )
-        ai_recommendation = chat_completion.choices[0].message.content.strip()
+        
+        ai_recommendation = expert_response.pesan_personal
+        expert_ref = expert_response.referensi_teori_jurnal
+        link_ref = expert_response.link_referensi
+        therapy_rec = expert_response.rekomendasi_terapi_evidence_based
+        link_therapy = expert_response.link_terapi
     except Exception as e:
-        if risk_level == "High":
-            ai_recommendation = "Kamu terdeteksi sedang berada di bawah tekanan mental yang sangat tinggi. Sangat disarankan untuk beristirahat sejenak, melakukan teknik pernapasan dalam, dan berbicara dengan konselor atau orang terdekat untuk meredakan kecemasanmu."
-        elif risk_level == "Medium":
-            ai_recommendation = "Ada beberapa tanda kelelahan emosional sedang. Cobalah untuk membagi waktu dengan lebih seimbang antara belajar dan bersantai, serta beristirahatlah yang cukup."
-        else:
-            ai_recommendation = "Keadaan emosionalmu tampak cukup stabil. Tetap pertahankan pola hidup seimbang dan luangkan waktu untuk relaksasi ya."
+        print(f"Error Instructor: {e}")
+        ai_recommendation = "Apa pun yang sedang kamu hadapi, kamu sudah sangat berani dengan membagikannya. Jaga dirimu baik-baik ya, satu langkah kecil hari ini sudah cukup."
+        expert_ref = "Standar Panduan Psikologi Umum"
+        link_ref = "https://www.apa.org"
+        therapy_rec = "Konseling Mandiri / Self-care"
+        link_therapy = "https://www.who.int/news-room/fact-sheets/detail/mental-health-strengthening-our-response"
     
     return {
         "risk_level": risk_level,
@@ -494,7 +537,10 @@ def predict(data: HealthData):
             "medium": round(float(risk_probs[2]), 4)
         },
         "genai_recommendation": ai_recommendation,
-        # Poin 4: Asesmen Mental Health
+        "expert_reference": expert_ref,
+        "link_referensi": link_ref,
+        "therapy_recommendation": therapy_rec,
+        "link_terapi": link_therapy,
         "mental_health_assessment": assessment
     }
 
