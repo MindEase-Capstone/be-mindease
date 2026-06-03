@@ -60,8 +60,22 @@ try:
 except Exception as e:
     print(f"Error Loading Profanity Model: {e}")
 
+LEET_MAP = {
+    '4': 'a', '@': 'a',
+    '1': 'i', '!': 'i',
+    '3': 'e',
+    '0': 'o',
+    '5': 's', '$': 's',
+    '7': 't',
+    '8': 'b',
+    '9': 'g'
+}
+
+def translate_leet(text: str) -> str:
+    return "".join(LEET_MAP.get(c, c) for c in text.lower())
+
 def preprocess_profanity(text):
-    text = str(text).lower()
+    text = translate_leet(str(text))
     text = re.sub(r'http\S+', '', text)
     text = re.sub(r'@\w+|#\w+', '', text)
     text = re.sub(r'USER|RT', '', text)
