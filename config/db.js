@@ -138,6 +138,19 @@ const initDB = async () => {
       )
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS feedbacks (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        name VARCHAR(255),
+        email VARCHAR(255),
+        type VARCHAR(100) NOT NULL,
+        message TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'unread',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // --- MIGRATION: Pastikan semua kolom baru ditambahkan jika tabel sudah ada sebelumnya ---
     try { await pool.query("ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'user'"); } catch (e) {}
     try { await pool.query("ALTER TABLE users ADD COLUMN birth_date VARCHAR(50)"); } catch (e) {}

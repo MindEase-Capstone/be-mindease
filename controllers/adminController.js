@@ -419,3 +419,43 @@ exports.changeUserRole = async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 };
+
+exports.getFeedbacks = async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM feedbacks ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};
+
+exports.updateFeedbackStatus = async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { status } = req.body;
+  if (!status) return res.status(400).json({ error: 'Status is required' });
+
+  try {
+    const result = await pool.query(
+      'UPDATE feedbacks SET status = $1 WHERE id = $2 RETURNING *',
+      [status, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Feedback not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};
+
+exports.deleteFeedback = async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  try {
+    const result = await pool.query('DELETE FROM feedbacks WHERE id = $1 RETURNING id', [id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Feedback not found' });
+    res.json({ message: 'Feedback deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};

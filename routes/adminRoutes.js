@@ -18,6 +18,10 @@ router.put('/users/:id/role', authenticateAdmin, adminController.changeUserRole)
 router.put('/make-admin/:username', authenticateAdmin, adminController.makeAdmin);
 router.put('/remove-admin/:username', authenticateAdmin, adminController.removeAdmin);
 
+router.get('/feedbacks', authenticateAdmin, adminController.getFeedbacks);
+router.put('/feedbacks/:id/status', authenticateAdmin, adminController.updateFeedbackStatus);
+router.delete('/feedbacks/:id', authenticateAdmin, adminController.deleteFeedback);
+
 router.get('/settings', authenticateAdmin, adminController.getSettings);
 router.post('/settings', authenticateAdmin, adminController.updateSetting);
 

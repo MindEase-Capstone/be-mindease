@@ -26,3 +26,19 @@ exports.getDoctors = async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 };
+
+exports.postFeedback = async (req, res) => {
+  const { user_id, name, email, type, message } = req.body;
+  if (!type || !message) return res.status(400).json({ error: 'Tipe dan pesan wajib diisi' });
+  
+  try {
+    const result = await pool.query(
+      'INSERT INTO feedbacks (user_id, name, email, type, message) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      [user_id || null, name, email, type, message]
+    );
+    res.json({ success: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error('Error posting feedback:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};
