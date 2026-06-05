@@ -243,11 +243,11 @@ const getReminderEmailTemplate = (username, hasCheckedIn) => {
           <div class="greeting">Halo, ${username}! 🌟</div>
           
           <div class="status-box">
-            <div class="status-title">sudah bl m km checkin</div>
+            <div class="status-title">sudah checkin belum?</div>
             <div class="status-desc">
-              ${checkinFlag 
-                ? '<strong>Status: Sudah Check-in!</strong> 🎉<br>Luar biasa! Terima kasih telah melakukan check-in suasana hati hari ini. Tetap pantau kesehatan mentalmu secara konsisten ya.' 
-                : '<strong>Status: Belum Check-in!</strong> ⚠️<br>Kamu belum melakukan check-in suasana hati hari ini. Yuk, luangkan waktu sejenak untuk mencatat perasaanmu agar pola emosimu tetap terpantau dengan baik.'}
+              ${checkinFlag
+      ? '<strong>Status: Sudah Check-in!</strong> 🎉<br>Luar biasa! Terima kasih telah melakukan check-in suasana hati hari ini. Tetap pantau kesehatan mentalmu secara konsisten ya.'
+      : '<strong>Status: Belum Check-in!</strong> ⚠️<br>Kamu belum melakukan check-in suasana hati hari ini. Yuk, luangkan waktu sejenak untuk mencatat perasaanmu agar pola emosimu tetap terpantau dengan baik.'}
             </div>
           </div>
 
@@ -260,9 +260,9 @@ const getReminderEmailTemplate = (username, hasCheckedIn) => {
             </p>
           </div>
           <p class="message" style="margin-bottom: 10px;">
-            ${checkinFlag 
-              ? 'Kamu dapat memantau kembali catatan emosimu hari ini melalui dashboard MindEase:'
-              : 'Hanya butuh waktu kurang dari 1 menit untuk melakukan check-in hari ini! Yuk, catat perasaanmu sekarang:'}
+            ${checkinFlag
+      ? 'Kamu dapat memantau kembali catatan emosimu hari ini melalui dashboard MindEase:'
+      : 'Hanya butuh waktu kurang dari 1 menit untuk melakukan check-in hari ini! Yuk, catat perasaanmu sekarang:'}
           </p>
           <div class="btn-wrapper">
             <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="btn">
@@ -302,7 +302,7 @@ const sendDailyMoodReminders = async () => {
     for (const user of users) {
       const isCheckedIn = !!user.has_checked_in;
       const statusText = isCheckedIn ? 'Sudah Check-in' : 'Belum Check-in';
-      
+
       const mailOptions = {
         from: process.env.SMTP_FROM || '"MindEase Reminder" <noreply@mindease.com>',
         to: user.email,
@@ -335,8 +335,8 @@ const sendDailyMoodReminders = async () => {
       success: true,
       count: sentCount > 0 ? sentCount : simulatedCount,
       type: transporter ? 'real' : 'simulation',
-      message: transporter 
-        ? `Berhasil mengirim ${sentCount} email pengingat asli.` 
+      message: transporter
+        ? `Berhasil mengirim ${sentCount} email pengingat asli.`
         : `Berhasil mensimulasikan ${simulatedCount} email pengingat ke log server.`
     };
   } catch (err) {
